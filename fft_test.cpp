@@ -1,11 +1,26 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
+#include "SoapySDR/Device.hpp"
+#include "SoapySDR/Logger.h"
+
+#include "fftw.h"
+
 #include <iostream>
 #include <random>
+#include <algorithm>
+
+using namespace SoapySDR;
+using namespace std;
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void processInput(GLFWwindow *window);
+
+Device* sdr;
+Stream* stream;
+
+void setup_sdr();
+std::vector<float> sdr_get_fft();
 
 // settings
 const unsigned int SCR_WIDTH = 800;
@@ -98,14 +113,16 @@ int main()
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 
+    setup_sdr();
+
     // set up vertex data (and buffer(s)) and configure vertex attributes
     // ------------------------------------------------------------------
     std::default_random_engine generator;
     std::uniform_int_distribution<int> distribution(-9999,9999);
-    float vertices[256*3];
-    unsigned int indices[256];
+    float vertices[4096*3];
+    unsigned int indices[4096];
 
-    for(int i = 0; i < 256;i++)
+    for(int i = 0; i < 4096;i++)
     {
       indices[i] = i;
     }
@@ -124,24 +141,52 @@ int main()
     };
     */
 
+    unsigned int VBO, VAO, EBO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+    glGenBuffers(1, &EBO);
+    // bind the Vertex Array Object first, then bind and set vertex buffer(s), and then configure vertex attributes(s).
+    glBindVertexArray(VAO);
+
+    //glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    //glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+    //glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+    //glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+    //glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    //glEnableVertexAttribArray(0);
+
+    // note that this is allowed, the call to glVertexAttribPointer registered VBO as the vertex attribute's bound vertex buffer object so afterwards we can safely unbind
+    //glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    // You can unbind the VAO afterwards so other VAO calls won't accidentally modify this VAO, but this rarely happens. Modifying other
+    // VAOs requires a call to glBindVertexArray anyways so we generally don't unbind VAOs (nor VBOs) when it's not directly necessary.
+    //glBindVertexArray(0);
+
 
     // uncomment this call to draw in wireframe polygons.
     //glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
     // render loop
-    // -----------
+
     while (!glfwWindowShouldClose(window))
     {
         // input
         // -----
         processInput(window);
 
-        unsigned int VBO, VAO, EBO;
-        glGenVertexArrays(1, &VAO);
-        glGenBuffers(1, &VBO);
-        glGenBuffers(1, &EBO);
-        // bind the Vertex Array Object first, then bind and set vertex buffer(s), and then configure vertex attributes(s).
-        glBindVertexArray(VAO);
+        std::vector<float> samps = sdr_get_fft();
+
+        auto it = max_element(std::begin(samps), std::end(samps));
+
+        for(int i = 0; i < 4096;i++)
+        {
+          vertices[(i * 3) + 0] = ((2.0f / 4096.0f) * static_cast<float>(i)) - 1.0f;
+          vertices[(i * 3) + 1] = samps[i] / *it;
+          vertices[(i * 3) + 2] = 0.0f;
+          //indices[i] = i;
+        }
 
         glBindBuffer(GL_ARRAY_BUFFER, VBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
@@ -152,23 +197,9 @@ int main()
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(0);
 
-        // note that this is allowed, the call to glVertexAttribPointer registered VBO as the vertex attribute's bound vertex buffer object so afterwards we can safely unbind
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-        // remember: do NOT unbind the EBO while a VAO is active as the bound element buffer object IS stored in the VAO; keep the EBO bound.
-        //glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-
-        // You can unbind the VAO afterwards so other VAO calls won't accidentally modify this VAO, but this rarely happens. Modifying other
-        // VAOs requires a call to glBindVertexArray anyways so we generally don't unbind VAOs (nor VBOs) when it's not directly necessary.
         glBindVertexArray(0);
-
-        for(int i = 0; i < 256;i++)
-        {
-          vertices[(i * 3) + 0] = (2.0f / 256.0f) * static_cast<float>(i) - 1.0f;
-          vertices[(i * 3) + 1] = static_cast<float>(distribution(generator)) / 10000.0f;
-          vertices[(i * 3) + 2] = 0.0f;
-          //indices[i] = i;
-        }
 
         // render
         // ------
@@ -179,22 +210,24 @@ int main()
         glUseProgram(shaderProgram);
         glBindVertexArray(VAO); // seeing as we only have a single VAO there's no need to bind it every time, but we'll do so to keep things a bit more organized
         //glDrawArrays(GL_TRIANGLES, 0, 6);
-        glDrawElements(GL_LINE_STRIP, 256, GL_UNSIGNED_INT, 0);
+        glDrawElements(GL_LINE_STRIP, 4096, GL_UNSIGNED_INT, 0);
         // glBindVertexArray(0); // no need to unbind it every time
 
         // glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
         // -------------------------------------------------------------------------------
         glfwSwapBuffers(window);
         glfwPollEvents();
-
-        glDeleteVertexArrays(1, &VAO);
-        glDeleteBuffers(1, &VBO);
-        glDeleteBuffers(1, &EBO);
     }
 
     // glfw: terminate, clearing all previously allocated GLFW resources.
     // ------------------------------------------------------------------
     glfwTerminate();
+
+    glDeleteVertexArrays(1, &VAO);
+    glDeleteBuffers(1, &VBO);
+    glDeleteBuffers(1, &EBO);
+
+
     return 0;
 }
 
@@ -213,4 +246,59 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
     // make sure the viewport matches the new window dimensions; note that width and
     // height will be significantly larger than specified on retina displays.
     glViewport(0, 0, width, height);
+}
+
+void setup_sdr()
+{
+  SoapySDR_setLogLevel(SoapySDRLogLevel::SOAPY_SDR_INFO);
+
+  Kwargs limesdr_args;
+  limesdr_args["driver"] = "lime";
+
+  sdr = Device::make(limesdr_args);
+
+  sdr->setAntenna(SOAPY_SDR_RX, 0, "LNAW");
+
+  sdr->setGain(SOAPY_SDR_RX, 0, "LNA", 10.0f);
+
+  sdr->setSampleRate(SOAPY_SDR_RX, 0, 1e6);
+
+  sdr->setFrequency(SOAPY_SDR_RX, 0, 105.7e6, Kwargs());
+
+  std::vector<size_t> channels = {0};
+  stream = sdr->setupStream(SOAPY_SDR_RX, "CF32", channels, Kwargs());
+
+  sdr->activateStream(stream);
+}
+std::vector<float> sdr_get_fft()
+{
+  std::vector<float> buffer(8192*2, 0.0f);
+
+  void* buffs[] = {&buffer[0]};
+
+  int flags;
+  long long timeN;
+  sdr->readStream(stream, buffs, 8192, flags, timeN);
+
+  std::vector<std::complex<double>> samps_in(8192);
+  std::vector<std::complex<double>> samps_out(8192);
+  for(int i = 0; i < 8192;i++)
+  {
+    samps_in[i] = std::complex<double>(buffer[(i * 2) + 0], buffer[(i * 2) + 0]);
+  }
+
+  fftw_plan p;
+  p = fftw_create_plan(8192, FFTW_FORWARD, FFTW_ESTIMATE);
+
+  fftw_one(p, reinterpret_cast<fftw_complex*>(&samps_in[0]), reinterpret_cast<fftw_complex*>(&samps_out[0]));
+
+  fftw_destroy_plan(p);
+
+  std::vector<float> zabs(4096);
+  for(int i = 0;i < 4096;i++)
+  {
+    zabs[i] = 20.0 * log10(std::abs(samps_out[i]));
+  }
+
+  return zabs;
 }
