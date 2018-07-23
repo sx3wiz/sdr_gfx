@@ -1,26 +1,16 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
-#include "SoapySDR/Device.hpp"
-#include "SoapySDR/Logger.h"
-
-#include "fftw.h"
-
 #include <iostream>
 #include <random>
 #include <algorithm>
 
-using namespace SoapySDR;
+#include "sdr_fft.hpp"
+
 using namespace std;
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void processInput(GLFWwindow *window);
-
-Device* sdr;
-Stream* stream;
-
-void setup_sdr();
-std::vector<float> sdr_get_fft();
 
 // settings
 const unsigned int SCR_WIDTH = 800;
@@ -54,7 +44,7 @@ int main()
 
     // glfw window creation
     // --------------------
-    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "LearnOpenGL", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "OpenGL FFT Demo", NULL, NULL);
     if (window == NULL)
     {
         std::cout << "Failed to create GLFW window" << std::endl;
@@ -113,16 +103,15 @@ int main()
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 
-    setup_sdr();
 
     // set up vertex data (and buffer(s)) and configure vertex attributes
     // ------------------------------------------------------------------
     std::default_random_engine generator;
     std::uniform_int_distribution<int> distribution(-9999,9999);
-    float vertices[4096*3];
-    unsigned int indices[4096];
+    float vertices[8192*3];
+    unsigned int indices[8192];
 
-    for(int i = 0; i < 4096;i++)
+    for(int i = 0; i < 8192;i++)
     {
       indices[i] = i;
     }
@@ -170,20 +159,21 @@ int main()
 
     // render loop
 
+    SDR_FFT sdr_fft;
+    sdr_fft.init();
+
     while (!glfwWindowShouldClose(window))
     {
         // input
         // -----
         processInput(window);
 
-        std::vector<float> samps = sdr_get_fft();
+        std::vector<float> samps = sdr_fft.get_fft();
 
-        auto it = max_element(std::begin(samps), std::end(samps));
-
-        for(int i = 0; i < 4096;i++)
+        for(int i = 0; i < 8192;i++)
         {
-          vertices[(i * 3) + 0] = ((2.0f / 4096.0f) * static_cast<float>(i)) - 1.0f;
-          vertices[(i * 3) + 1] = samps[i] / *it;
+          vertices[(i * 3) + 0] = ((2.0f / 8192.0f) * static_cast<float>(i)) - 1.0f;
+          vertices[(i * 3) + 1] = samps[i] / 100.0f;
           vertices[(i * 3) + 2] = 0.0f;
           //indices[i] = i;
         }
@@ -192,7 +182,7 @@ int main()
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_DYNAMIC_DRAW);
 
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
         glEnableVertexAttribArray(0);
@@ -210,7 +200,7 @@ int main()
         glUseProgram(shaderProgram);
         glBindVertexArray(VAO); // seeing as we only have a single VAO there's no need to bind it every time, but we'll do so to keep things a bit more organized
         //glDrawArrays(GL_TRIANGLES, 0, 6);
-        glDrawElements(GL_LINE_STRIP, 4096, GL_UNSIGNED_INT, 0);
+        glDrawElements(GL_LINE_STRIP, 8192, GL_UNSIGNED_INT, 0);
         // glBindVertexArray(0); // no need to unbind it every time
 
         // glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
@@ -246,59 +236,4 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
     // make sure the viewport matches the new window dimensions; note that width and
     // height will be significantly larger than specified on retina displays.
     glViewport(0, 0, width, height);
-}
-
-void setup_sdr()
-{
-  SoapySDR_setLogLevel(SoapySDRLogLevel::SOAPY_SDR_INFO);
-
-  Kwargs limesdr_args;
-  limesdr_args["driver"] = "lime";
-
-  sdr = Device::make(limesdr_args);
-
-  sdr->setAntenna(SOAPY_SDR_RX, 0, "LNAW");
-
-  sdr->setGain(SOAPY_SDR_RX, 0, "LNA", 10.0f);
-
-  sdr->setSampleRate(SOAPY_SDR_RX, 0, 1e6);
-
-  sdr->setFrequency(SOAPY_SDR_RX, 0, 105.7e6, Kwargs());
-
-  std::vector<size_t> channels = {0};
-  stream = sdr->setupStream(SOAPY_SDR_RX, "CF32", channels, Kwargs());
-
-  sdr->activateStream(stream);
-}
-std::vector<float> sdr_get_fft()
-{
-  std::vector<float> buffer(8192*2, 0.0f);
-
-  void* buffs[] = {&buffer[0]};
-
-  int flags;
-  long long timeN;
-  sdr->readStream(stream, buffs, 8192, flags, timeN);
-
-  std::vector<std::complex<double>> samps_in(8192);
-  std::vector<std::complex<double>> samps_out(8192);
-  for(int i = 0; i < 8192;i++)
-  {
-    samps_in[i] = std::complex<double>(buffer[(i * 2) + 0], buffer[(i * 2) + 0]);
-  }
-
-  fftw_plan p;
-  p = fftw_create_plan(8192, FFTW_FORWARD, FFTW_ESTIMATE);
-
-  fftw_one(p, reinterpret_cast<fftw_complex*>(&samps_in[0]), reinterpret_cast<fftw_complex*>(&samps_out[0]));
-
-  fftw_destroy_plan(p);
-
-  std::vector<float> zabs(4096);
-  for(int i = 0;i < 4096;i++)
-  {
-    zabs[i] = 20.0 * log10(std::abs(samps_out[i]));
-  }
-
-  return zabs;
 }
