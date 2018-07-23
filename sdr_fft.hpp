@@ -69,8 +69,8 @@ public:
     std::vector<float> zabs(8192);
     for(int i = 0;i < 4096;i++)
     {
-      zabs[i+4096] = 20.0 * log10(std::abs(samps_out[i]));
-      zabs[i] = 20.0 * log10(std::abs(samps_out[i+4096]));
+      zabs[i + 4096] = 20.0 * log10(std::abs(samps_out[i]));
+      zabs[i] = 20.0 * log10(std::abs(samps_out[i + 4096]));
     }
 
     return zabs;
