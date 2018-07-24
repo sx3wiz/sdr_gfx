@@ -16,6 +16,8 @@ void processInput(GLFWwindow *window);
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
 
+#define N 8192
+
 const char *vertexShaderSource = "#version 330 core\n"
     "layout (location = 0) in vec3 aPos;\n"
     "void main()\n"
@@ -108,10 +110,10 @@ int main()
     // ------------------------------------------------------------------
     std::default_random_engine generator;
     std::uniform_int_distribution<int> distribution(-9999,9999);
-    float vertices[8192*3];
-    unsigned int indices[8192];
+    float vertices[N*3];
+    unsigned int indices[N];
 
-    for(int i = 0; i < 8192;i++)
+    for(int i = 0; i < N;i++)
     {
       indices[i] = i;
     }
@@ -137,7 +139,7 @@ int main()
     // bind the Vertex Array Object first, then bind and set vertex buffer(s), and then configure vertex attributes(s).
     glBindVertexArray(VAO);
 
-    std::vector<float> zverts(8192*3, 0.0f);
+    std::vector<float> zverts(N*3, 0.0f);
 
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), &zverts[0], GL_DYNAMIC_DRAW);
@@ -161,7 +163,7 @@ int main()
 
     // render loop
 
-    SDR_FFT sdr_fft;
+    SDR_FFT<N> sdr_fft;
     sdr_fft.init();
 
     while (!glfwWindowShouldClose(window))
@@ -172,9 +174,9 @@ int main()
 
         std::vector<float> samps = sdr_fft.get_fft();
 
-        for(int i = 0; i < 8192;i++)
+        for(int i = 0; i < N;i++)
         {
-          vertices[(i * 3) + 0] = ((2.0f / 8192.0f) * static_cast<float>(i)) - 1.0f;
+          vertices[(i * 3) + 0] = ((2.0f / static_cast<float>(N)) * static_cast<float>(i)) - 1.0f;
           vertices[(i * 3) + 1] = samps[i] / 100.0f;
           vertices[(i * 3) + 2] = 0.0f;
           //indices[i] = i;
@@ -192,7 +194,7 @@ int main()
         glUseProgram(shaderProgram);
         glBindVertexArray(VAO); // seeing as we only have a single VAO there's no need to bind it every time, but we'll do so to keep things a bit more organized
         //glDrawArrays(GL_TRIANGLES, 0, 6);
-        glDrawElements(GL_LINE_STRIP, 8192, GL_UNSIGNED_INT, 0);
+        glDrawElements(GL_LINE_STRIP, N, GL_UNSIGNED_INT, 0);
         // glBindVertexArray(0); // no need to unbind it every time
 
         // glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
